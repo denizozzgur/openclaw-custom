@@ -270,9 +270,9 @@ echo "[clawoop]   BOOTSTRAP.md removed ✓"
 
 # 6f: Verify workspace files
 echo "[clawoop]   Workspace files:"
-ls -la "$WORKSPACE/"*.md 2>/dev/null || echo "   (no .md files found)"
+ls -la "$WORKSPACE/" 2>/dev/null || echo "   (workspace dir not found)"
 echo "[clawoop]   SOUL.md preview:"
-head -5 "$WORKSPACE/SOUL.md" 2>/dev/null || true
+cat "$WORKSPACE/SOUL.md" 2>/dev/null | head -5 || echo "   (SOUL.md not found)"
 
 # Step 8: Start credit proxy (if Supabase creds available)
 echo "[clawoop] Step 8: Starting credit proxy..."
