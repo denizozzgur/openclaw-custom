@@ -232,15 +232,25 @@ else
   echo "[clawoop]   Supabase creds missing — credit proxy skipped (no cap enforced)"
 fi
 
-# Step 9: Start the gateway
-echo "[clawoop] Step 9: Starting gateway..."
+# Step 9: Start credential poller (hot-reload integrations without restart)
+echo "[clawoop] Step 9: Starting credential poller..."
+if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$USER_ID" ]; then
+  node /home/node/credential-poller.mjs &
+  POLLER_PID=$!
+  echo "[clawoop]   Credential poller started (PID: $POLLER_PID)"
+else
+  echo "[clawoop]   Missing Supabase creds — credential poller skipped"
+fi
+
+# Step 10: Start the gateway
+echo "[clawoop] Step 10: Starting gateway..."
 node openclaw.mjs gateway --allow-unconfigured &
 GATEWAY_PID=$!
 
-# Step 10: Health check — wait for gateway, then mark as running
+# Step 11: Health check — wait for gateway, then mark as running
 if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$INSTANCE_ID" ]; then
   (
-    echo "[clawoop] Step 10: Waiting for gateway to become healthy..."
+    echo "[clawoop] Step 11: Waiting for gateway to become healthy..."
     for i in $(seq 1 60); do
       sleep 5
       # Check if gateway process is still alive
