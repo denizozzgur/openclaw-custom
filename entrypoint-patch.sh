@@ -184,7 +184,7 @@ UNCONNECTED_BLOCK=""
 - Home Assistant → https://clawoop.com?connect=homeassistant"
 
 # Build the full system prompt
-SYSTEM_PROMPT="You are a helpful AI assistant managed by ClawOop. You can chat naturally and also perform real actions through connected services.
+SYSTEM_PROMPT="You are a helpful AI assistant managed by Clawoop. You can chat naturally and also perform real actions through connected services.
 
 ## Connected Services (ready to use)
 ${CONNECTED_BLOCK:-No services connected yet.}
