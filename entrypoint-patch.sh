@@ -35,24 +35,27 @@ if [ "$PLATFORM" = "slack" ]; then
 elif [ "$PLATFORM" = "discord" ]; then
   node openclaw.mjs config set --json channels.discord "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$DISCORD_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
 elif [ "$PLATFORM" = "whatsapp" ]; then
-  echo "[clawoop]   Writing WhatsApp config directly to openclaw.json..."
+  echo "[clawoop]   WhatsApp uses Business API — enabling HTTP chat API for webhook bridge..."
   CONFIG_FILE="/home/node/.openclaw/openclaw.json"
   mkdir -p /home/node/.openclaw
-  # If config file exists, add whatsapp channel; otherwise create with defaults
-  if [ -f "$CONFIG_FILE" ]; then
-    # Use node to merge WhatsApp config into existing config
-    node -e "
-      const fs = require('fs');
-      const cfg = JSON.parse(fs.readFileSync('$CONFIG_FILE', 'utf8'));
-      cfg.channels = cfg.channels || {};
-      cfg.channels.whatsapp = { enabled: true, dmPolicy: 'open', allowFrom: ['*'] };
-      fs.writeFileSync('$CONFIG_FILE', JSON.stringify(cfg, null, 2));
-      console.log('[clawoop]   WhatsApp channel added to config');
-    " 2>&1 || true
-  else
-    echo '{"channels":{"whatsapp":{"enabled":true,"dmPolicy":"open","allowFrom":["*"]}}}' > "$CONFIG_FILE"
-    echo "[clawoop]   Created openclaw.json with WhatsApp config"
-  fi
+  mkdir -p /home/node/.openclaw/sessions
+  mkdir -p /home/node/.openclaw/credentials
+  # WhatsApp containers don't use a native channel — our webhook bridges messages
+  # Enable the HTTP chat completions endpoint so the webhook can forward messages here
+  node -e "
+    const fs = require('fs');
+    const cfgPath = '$CONFIG_FILE';
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch(e) {}
+    cfg.gateway = cfg.gateway || {};
+    cfg.gateway.http = cfg.gateway.http || {};
+    cfg.gateway.http.endpoints = cfg.gateway.http.endpoints || {};
+    cfg.gateway.http.endpoints.chatCompletions = { enabled: true };
+    cfg.gateway.auth = cfg.gateway.auth || {};
+    cfg.gateway.auth.mode = 'none';
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    console.log('[clawoop]   HTTP chat completions API enabled for WhatsApp bridge');
+  " 2>&1 || true
 else
   node openclaw.mjs config set --json channels.telegram "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$TELEGRAM_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
 fi
