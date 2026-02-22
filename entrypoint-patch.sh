@@ -205,6 +205,13 @@ node openclaw.mjs config set ai.systemPrompt "$SYSTEM_PROMPT" 2>&1 || true
 
 echo "[clawoop]   System prompt configured."
 
+# Step 6b: Remove BOOTSTRAP.md so our system prompt takes full control
+echo "[clawoop] Step 6b: Removing BOOTSTRAP.md..."
+rm -f /home/node/.openclaw/BOOTSTRAP.md 2>/dev/null || true
+rm -f /home/node/BOOTSTRAP.md 2>/dev/null || true
+find /home/node -name "BOOTSTRAP.md" -delete 2>/dev/null || true
+echo "[clawoop]   BOOTSTRAP.md removed ✓"
+
 # Step 7: Run openclaw doctor --fix to apply any remaining fixes
 echo "[clawoop] Step 7: Running doctor --fix..."
 node openclaw.mjs doctor --fix 2>&1 || true
