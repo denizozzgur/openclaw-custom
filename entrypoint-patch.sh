@@ -146,8 +146,15 @@ if [ -n "$TRELLO_API_KEY" ]; then
   node openclaw.mjs config set --json tools.trello '{"enabled":true}' 2>&1 || true
 fi
 
+# Step 5b: Run openclaw doctor --fix BEFORE prompt injection (so it doesn't reset our config)
+echo "[clawoop] Step 5b: Running doctor --fix..."
+node openclaw.mjs doctor --fix 2>&1 || true
+
 # Step 6: Build and inject JIT system prompt
 echo "[clawoop] Step 6: Configuring JIT system prompt..."
+
+# Debug: log which env vars are present
+echo "[clawoop]   ENV CHECK: GOG_REFRESH_TOKEN=${GOG_REFRESH_TOKEN:+SET} NOTION_API_KEY=${NOTION_API_KEY:+SET} GITHUB_TOKEN=${GITHUB_TOKEN:+SET}"
 
 # Build list of connected services with capabilities
 CONNECTED_BLOCK=""
@@ -183,8 +190,13 @@ UNCONNECTED_BLOCK=""
 [ -z "$HA_URL" ] && UNCONNECTED_BLOCK="${UNCONNECTED_BLOCK}
 - Home Assistant → https://clawoop.com?connect=homeassistant"
 
-# Build the full system prompt
-SYSTEM_PROMPT="You are a helpful AI assistant managed by Clawoop. You can chat naturally and also perform real actions through connected services.
+# Write system prompt to a temp file to avoid escaping issues
+cat > /tmp/clawoop-system-prompt.txt << 'PROMPT_DELIM'
+You are a helpful AI assistant managed by Clawoop. You can chat naturally and also perform real actions through connected services.
+PROMPT_DELIM
+
+# Append the dynamic parts
+cat >> /tmp/clawoop-system-prompt.txt << PROMPT_DYNAMIC
 
 ## Connected Services (ready to use)
 ${CONNECTED_BLOCK:-No services connected yet.}
@@ -198,12 +210,16 @@ ${UNCONNECTED_BLOCK:-All services are connected!}
 - For unconnected services, explain what's needed and share the exact connection link.
 - Never fabricate data. If a tool call fails, tell the user honestly.
 - Be concise and helpful.
-- If an AI request fails with a credit_exceeded or rate_limit error, tell the user: 'Aylık AI krediniz doldu. Bir sonraki faturalama döneminde yenilenecektir.' Do not retry."
+- If an AI request fails with a credit_exceeded or rate_limit error, tell the user: 'Aylık AI krediniz doldu. Bir sonraki faturalama döneminde yenilenecektir.' Do not retry.
+PROMPT_DYNAMIC
+
+SYSTEM_PROMPT=$(cat /tmp/clawoop-system-prompt.txt)
 
 # Inject into OpenClaw config
-node openclaw.mjs config set ai.systemPrompt "$SYSTEM_PROMPT" 2>&1 || true
-
-echo "[clawoop]   System prompt configured."
+echo "[clawoop]   Injecting system prompt (${#SYSTEM_PROMPT} chars)..."
+node openclaw.mjs config set ai.systemPrompt "$SYSTEM_PROMPT" 2>&1
+PROMPT_RESULT=$?
+echo "[clawoop]   System prompt injection exit code: $PROMPT_RESULT"
 
 # Step 6b: Remove BOOTSTRAP.md so our system prompt takes full control
 echo "[clawoop] Step 6b: Removing BOOTSTRAP.md..."
@@ -212,9 +228,9 @@ rm -f /home/node/BOOTSTRAP.md 2>/dev/null || true
 find /home/node -name "BOOTSTRAP.md" -delete 2>/dev/null || true
 echo "[clawoop]   BOOTSTRAP.md removed ✓"
 
-# Step 7: Run openclaw doctor --fix to apply any remaining fixes
-echo "[clawoop] Step 7: Running doctor --fix..."
-node openclaw.mjs doctor --fix 2>&1 || true
+# Verify: dump what config looks like now
+echo "[clawoop]   Verifying config..."
+node openclaw.mjs config get ai.systemPrompt 2>&1 | head -5 || true
 
 # Step 8: Start credit proxy (if Supabase creds available)
 echo "[clawoop] Step 8: Starting credit proxy..."
