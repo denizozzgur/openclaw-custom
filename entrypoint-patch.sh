@@ -343,45 +343,62 @@ else
   echo "[clawoop]   Missing Supabase creds — credential poller skipped"
 fi
 
-# Step 10: Start the gateway
+# Step 10: Start the gateway (with auto-restart on crash)
 update_stage "starting"
 echo "[clawoop] Step 10: Starting gateway..."
-if [ "$PLATFORM" = "whatsapp" ]; then
-  # WhatsApp uses Business API bridge — no native channel, just HTTP API
-  echo "[clawoop]   Starting gateway with HTTP API for WhatsApp bridge..."
-  node openclaw.mjs gateway --allow-unconfigured &
-  GATEWAY_PID=$!
-else
-  node openclaw.mjs gateway --allow-unconfigured &
-  GATEWAY_PID=$!
-fi
 
-# Step 11: Health check — wait for gateway, then mark as running
+MAX_RETRIES=5
+RETRY=0
+while [ $RETRY -lt $MAX_RETRIES ]; do
+  RETRY=$((RETRY + 1))
+  echo "[clawoop]   Gateway start attempt $RETRY/$MAX_RETRIES"
+
+  node openclaw.mjs gateway --allow-unconfigured 2>&1 &
+  GATEWAY_PID=$!
+
+  # Health check — wait for gateway to become healthy
+  if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$INSTANCE_ID" ]; then
+    (
+      for i in $(seq 1 45); do
+        sleep 2
+        if ! kill -0 $GATEWAY_PID 2>/dev/null; then
+          echo "[clawoop]   Gateway process died during health check"
+          break
+        fi
+        if curl -sf http://127.0.0.1:3000/health > /dev/null 2>&1 || curl -sf http://127.0.0.1:3000/ > /dev/null 2>&1; then
+          echo "[clawoop]   Gateway is healthy — updating status to running"
+          curl -sf -X PATCH "${SUPABASE_URL}/rest/v1/deployments?id=eq.${INSTANCE_ID}" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"status": "running", "deploy_stage": "ready"}' > /dev/null 2>&1
+          echo "[clawoop]   Status updated to running ✓"
+          break
+        fi
+        echo "[clawoop]   Attempt $i/45 — gateway not ready yet..."
+      done
+    ) &
+  fi
+
+  # Wait for gateway to exit
+  wait $GATEWAY_PID
+  EXIT_CODE=$?
+  echo "[clawoop]   Gateway exited with code $EXIT_CODE"
+
+  if [ $RETRY -lt $MAX_RETRIES ]; then
+    DELAY=$((RETRY * 5))
+    echo "[clawoop]   Restarting in ${DELAY}s..."
+    sleep $DELAY
+  fi
+done
+
+echo "[clawoop]   Gateway failed after $MAX_RETRIES attempts"
+# Update status to error
 if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$INSTANCE_ID" ]; then
-  (
-    echo "[clawoop] Step 11: Waiting for gateway to become healthy..."
-    for i in $(seq 1 30); do
-      sleep 2
-      # Check if gateway process is still alive
-      if ! kill -0 $GATEWAY_PID 2>/dev/null; then
-        echo "[clawoop]   Gateway process died — skipping health callback"
-        break
-      fi
-      # Try to reach the gateway health endpoint
-      if curl -sf http://127.0.0.1:3000/health > /dev/null 2>&1 || curl -sf http://127.0.0.1:3000/ > /dev/null 2>&1; then
-        echo "[clawoop]   Gateway is healthy — updating status to running"
-        curl -sf -X PATCH "${SUPABASE_URL}/rest/v1/deployments?id=eq.${INSTANCE_ID}" \
-          -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
-          -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-          -H "Content-Type: application/json" \
-          -d '{"status": "running", "deploy_stage": "ready"}' > /dev/null 2>&1
-        echo "[clawoop]   Status updated to running ✓"
-        break
-      fi
-      echo "[clawoop]   Attempt $i/30 — gateway not ready yet..."
-    done
-  ) &
+  curl -sf -X PATCH "${SUPABASE_URL}/rest/v1/deployments?id=eq.${INSTANCE_ID}" \
+    -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Content-Type: application/json" \
+    -d '{"status": "error", "deploy_stage": "building"}' > /dev/null 2>&1
 fi
 
-# Wait for gateway to exit
-wait $GATEWAY_PID
