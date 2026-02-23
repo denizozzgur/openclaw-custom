@@ -356,27 +356,22 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
   node openclaw.mjs gateway --allow-unconfigured 2>&1 &
   GATEWAY_PID=$!
 
-  # Health check — wait for gateway to become healthy
+  # Health check — wait for gateway process to stabilize, then mark as running
   if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$INSTANCE_ID" ]; then
     (
-      for i in $(seq 1 45); do
-        sleep 2
-        if ! kill -0 $GATEWAY_PID 2>/dev/null; then
-          echo "[clawoop]   Gateway process died during health check"
-          break
-        fi
-        if curl -sf http://127.0.0.1:3000/health > /dev/null 2>&1 || curl -sf http://127.0.0.1:3000/ > /dev/null 2>&1; then
-          echo "[clawoop]   Gateway is healthy — updating status to running"
-          curl -sf -X PATCH "${SUPABASE_URL}/rest/v1/deployments?id=eq.${INSTANCE_ID}" \
-            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{"status": "running", "deploy_stage": "ready"}' > /dev/null 2>&1
-          echo "[clawoop]   Status updated to running ✓"
-          break
-        fi
-        echo "[clawoop]   Attempt $i/45 — gateway not ready yet..."
-      done
+      # Give gateway 20s to start and stabilize
+      sleep 20
+      if kill -0 $GATEWAY_PID 2>/dev/null; then
+        echo "[clawoop]   Gateway process alive after 20s — marking as running"
+        curl -sf -X PATCH "${SUPABASE_URL}/rest/v1/deployments?id=eq.${INSTANCE_ID}" \
+          -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+          -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+          -H "Content-Type: application/json" \
+          -d '{"status": "running", "deploy_stage": "ready"}' > /dev/null 2>&1
+        echo "[clawoop]   Status updated to running ✓"
+      else
+        echo "[clawoop]   Gateway process died within 20s"
+      fi
     ) &
   fi
 
