@@ -85,6 +85,71 @@ else
   echo "[clawoop]   WARNING: No API key found for provider ${AI_PROVIDER:-anthropic}"
 fi
 
+# Step 3b: Directly write auth-profiles.json as failsafe
+# OpenClaw reads API keys from this file; the config set commands above may silently fail.
+echo "[clawoop] Step 3b: Writing auth-profiles.json directly..."
+AUTH_DIR="/home/node/.openclaw/agents/main/agent"
+mkdir -p "$AUTH_DIR"
+
+if [ "$AI_PROVIDER" = "openai" ] && [ -n "$OPENAI_API_KEY" ]; then
+  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
+{
+  "default": {
+    "provider": "openai",
+    "type": "api-key",
+    "key": "$OPENAI_API_KEY"
+  }
+}
+AUTH_EOF
+  echo "[clawoop]   auth-profiles.json written for openai ✓"
+elif [ "$AI_PROVIDER" = "google" ] && [ -n "$GOOGLE_API_KEY" ]; then
+  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
+{
+  "default": {
+    "provider": "google",
+    "type": "api-key",
+    "key": "$GOOGLE_API_KEY"
+  }
+}
+AUTH_EOF
+  echo "[clawoop]   auth-profiles.json written for google ✓"
+elif [ "$AI_PROVIDER" = "xai" ] && [ -n "$XAI_API_KEY" ]; then
+  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
+{
+  "default": {
+    "provider": "xai",
+    "type": "api-key",
+    "key": "$XAI_API_KEY"
+  }
+}
+AUTH_EOF
+  echo "[clawoop]   auth-profiles.json written for xai ✓"
+elif [ "$AI_PROVIDER" = "deepseek" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
+  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
+{
+  "default": {
+    "provider": "deepseek",
+    "type": "api-key",
+    "key": "$DEEPSEEK_API_KEY"
+  }
+}
+AUTH_EOF
+  echo "[clawoop]   auth-profiles.json written for deepseek ✓"
+elif [ -n "$ANTHROPIC_API_KEY" ]; then
+  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
+{
+  "default": {
+    "provider": "anthropic",
+    "type": "api-key",
+    "key": "$ANTHROPIC_API_KEY"
+  }
+}
+AUTH_EOF
+  echo "[clawoop]   auth-profiles.json written for anthropic ✓"
+else
+  echo "[clawoop]   WARNING: No API key available to write auth-profiles.json"
+fi
+
 # Step 4: Configure Google OAuth for gog tool (Calendar, Gmail, Drive)
 update_stage "connecting"
 echo "[clawoop] Step 4: Configuring Google services..."
