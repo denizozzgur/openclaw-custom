@@ -1,4 +1,4 @@
-FROM ghcr.io/openclaw/openclaw:2026.1
+FROM ghcr.io/openclaw/openclaw:latest
 
 # Install CLI tools: gog (Google Workspace) + gh (GitHub)
 USER root
