@@ -172,7 +172,7 @@ ${unconnectedBlock || 'All services are connected!'}
 - If an AI request fails with a credit_exceeded or rate_limit error, tell the user: "Aylık AI krediniz doldu. Bir sonraki faturalama döneminde yenilenecektir." Do not retry.`;
 }
 
-function applyConfigUpdate(serviceTokens) {
+async function applyConfigUpdate(serviceTokens) {
     // 1. Update .env file
     const { lines, envVars } = buildEnvBlock(serviceTokens);
     try {
@@ -233,6 +233,46 @@ function applyConfigUpdate(serviceTokens) {
         console.log('[credential-poller] SOUL.md updated');
     } catch (e) {
         console.error('[credential-poller] Failed to update SOUL.md:', e.message);
+    }
+
+    // 4. Graceful gateway restart to pick up new .env vars
+    //    This is an internal-only restart (3-5s), NOT a Railway container restart.
+    //    The container stays up, only the gateway node process restarts.
+    try {
+        // Find gateway PID (it's the node process running openclaw.mjs gateway)
+        const gatewayPids = execSync("pgrep -f 'openclaw.mjs gateway' || true", {
+            encoding: 'utf-8', timeout: 3000,
+        }).trim();
+
+        if (gatewayPids) {
+            const pids = gatewayPids.split('\n').filter(p => p.trim());
+            for (const pid of pids) {
+                try {
+                    // SIGHUP = graceful reload for many Node processes
+                    process.kill(parseInt(pid), 'SIGHUP');
+                    console.log(`[credential-poller] Sent SIGHUP to gateway PID ${pid}`);
+                } catch (killErr) {
+                    console.warn(`[credential-poller] SIGHUP failed for PID ${pid}:`, killErr.message);
+                }
+            }
+            // Wait briefly, check if gateway is still alive
+            await new Promise(r => setTimeout(r, 2000));
+            const stillAlive = execSync("pgrep -f 'openclaw.mjs gateway' || true", {
+                encoding: 'utf-8', timeout: 3000,
+            }).trim();
+
+            if (stillAlive) {
+                console.log('[credential-poller] Gateway still running after SIGHUP — credentials will apply on file read');
+            } else {
+                // Gateway died from SIGHUP — the entrypoint's auto-restart loop will bring it back
+                console.log('[credential-poller] Gateway exited after SIGHUP — entrypoint will auto-restart it with new env');
+            }
+        } else {
+            console.warn('[credential-poller] No gateway process found — skipping restart signal');
+        }
+    } catch (e) {
+        // Non-fatal: credentials are written, they'll take effect on next natural restart
+        console.warn('[credential-poller] Gateway signal failed (non-critical):', e.message);
     }
 }
 
