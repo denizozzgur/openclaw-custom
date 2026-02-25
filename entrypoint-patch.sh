@@ -35,31 +35,10 @@ if [ "$PLATFORM" = "slack" ]; then
 elif [ "$PLATFORM" = "discord" ]; then
   node openclaw.mjs config set --json channels.discord "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$DISCORD_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
 elif [ "$PLATFORM" = "whatsapp" ]; then
-  echo "[clawoop]   WhatsApp uses Business API — enabling HTTP chat API for webhook bridge..."
-  CONFIG_FILE="/home/node/.openclaw/openclaw.json"
-  mkdir -p /home/node/.openclaw
-  mkdir -p /home/node/.openclaw/sessions
-  mkdir -p /home/node/.openclaw/credentials
-  # Generate a gateway token for secure HTTP access (if not already set)
-  GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | head -c 32)}"
-  export OPENCLAW_GATEWAY_TOKEN="$GATEWAY_TOKEN"
-  # WhatsApp containers don't use a native channel — our webhook bridges messages
-  # Enable the HTTP chat completions endpoint so the webhook can forward messages here
-  node -e "
-    const fs = require('fs');
-    const cfgPath = '$CONFIG_FILE';
-    let cfg = {};
-    try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch(e) {}
-    cfg.gateway = cfg.gateway || {};
-    cfg.gateway.http = cfg.gateway.http || {};
-    cfg.gateway.http.endpoints = cfg.gateway.http.endpoints || {};
-    cfg.gateway.http.endpoints.chatCompletions = { enabled: true };
-    cfg.gateway.auth = cfg.gateway.auth || {};
-    cfg.gateway.auth.mode = 'token';
-    cfg.gateway.auth.token = '$GATEWAY_TOKEN';
-    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-    console.log('[clawoop]   HTTP chat completions API enabled with token auth for WhatsApp bridge');
-  " 2>&1 || true
+  echo "[clawoop]   Setting up native WhatsApp channel via Baileys..."
+  # Use OpenClaw's built-in WhatsApp support (Baileys)
+  # dmPolicy=open allows anyone to message, allowFrom=["*"] accepts all senders
+  node openclaw.mjs config set --json channels.whatsapp "{\"enabled\":true,\"dmPolicy\":\"open\",\"allowFrom\":[\"*\"]}" 2>&1 || true
 else
   node openclaw.mjs config set --json channels.telegram "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$TELEGRAM_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
 fi
