@@ -193,25 +193,9 @@ function applyConfigUpdate(serviceTokens) {
         console.error('[credential-poller] Failed to update .env:', e.message);
     }
 
-    // 2. Enable/disable tools
-    const toolUpdates = [
-        { key: 'GOG_REFRESH_TOKEN', tool: 'gog' },
-        { key: 'NOTION_API_KEY', tool: 'notion' },
-        { key: 'GITHUB_TOKEN', tool: 'github' },
-        { key: 'TRELLO_API_KEY', tool: 'trello' },
-    ];
-    for (const { key, tool } of toolUpdates) {
-        const enabled = !!envVars[key];
-        try {
-            execSync(`node openclaw.mjs config set --json tools.${tool} '{"enabled":${enabled}}'`, {
-                cwd: '/home/node',
-                stdio: 'pipe',
-                timeout: 5000,
-            });
-        } catch (e) {
-            // Non-critical
-        }
-    }
+    // 2. Tools are auto-detected by OpenClaw via env vars (NOTION_API_KEY, GITHUB_TOKEN, etc.)
+    // No tools.* config keys needed — the .env file update above is sufficient.
+    console.log('[credential-poller] Tool env vars updated (tools auto-detected by OpenClaw)');
 
     // 2b. Hot-reload gog keyring when Google credentials change
     if (envVars.GOG_REFRESH_TOKEN && envVars.GOG_CONNECTED_EMAIL) {

@@ -40,6 +40,9 @@ elif [ "$PLATFORM" = "whatsapp" ]; then
   mkdir -p /home/node/.openclaw
   mkdir -p /home/node/.openclaw/sessions
   mkdir -p /home/node/.openclaw/credentials
+  # Generate a gateway token for secure HTTP access (if not already set)
+  GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | head -c 32)}"
+  export OPENCLAW_GATEWAY_TOKEN="$GATEWAY_TOKEN"
   # WhatsApp containers don't use a native channel — our webhook bridges messages
   # Enable the HTTP chat completions endpoint so the webhook can forward messages here
   node -e "
@@ -52,103 +55,28 @@ elif [ "$PLATFORM" = "whatsapp" ]; then
     cfg.gateway.http.endpoints = cfg.gateway.http.endpoints || {};
     cfg.gateway.http.endpoints.chatCompletions = { enabled: true };
     cfg.gateway.auth = cfg.gateway.auth || {};
-    cfg.gateway.auth.mode = 'none';
+    cfg.gateway.auth.mode = 'token';
+    cfg.gateway.auth.token = '$GATEWAY_TOKEN';
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-    console.log('[clawoop]   HTTP chat completions API enabled for WhatsApp bridge');
+    console.log('[clawoop]   HTTP chat completions API enabled with token auth for WhatsApp bridge');
   " 2>&1 || true
 else
   node openclaw.mjs config set --json channels.telegram "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$TELEGRAM_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
 fi
 
-# Step 3: Also set the AI provider config
-echo "[clawoop] Step 3: Setting AI provider config..."
-echo "[clawoop]   Provider: ${AI_PROVIDER:-anthropic}, Model: ${AI_MODEL:-claude-opus-4-20250514}"
-node openclaw.mjs config set ai.provider "${AI_PROVIDER:-anthropic}" 2>&1 || true
-node openclaw.mjs config set ai.model "${AI_MODEL:-claude-opus-4-20250514}" 2>&1 || true
+# Step 3: Set the AI model via valid OpenClaw config path
+echo "[clawoop] Step 3: Setting AI model config..."
+echo "[clawoop]   Model: ${AI_MODEL:-anthropic/claude-opus-4-6}"
+# Use the correct OpenClaw config key: agents.defaults.model (provider/model format)
+node openclaw.mjs config set agents.defaults.model "${AI_MODEL:-anthropic/claude-opus-4-6}" 2>&1 || true
+echo "[clawoop]   Model set via agents.defaults.model ✓"
+# API keys are read directly from env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+# No need for ai.credentials — OpenClaw detects keys from environment automatically.
 
-if [ "$AI_PROVIDER" = "openai" ] && [ -n "$OPENAI_API_KEY" ]; then
-  node openclaw.mjs config set --json ai.credentials "{\"openaiApiKey\":\"$OPENAI_API_KEY\"}" 2>&1 || true
-  echo "[clawoop]   OpenAI credentials set ✓"
-elif [ "$AI_PROVIDER" = "google" ] && [ -n "$GOOGLE_API_KEY" ]; then
-  node openclaw.mjs config set --json ai.credentials "{\"googleApiKey\":\"$GOOGLE_API_KEY\"}" 2>&1 || true
-  echo "[clawoop]   Google credentials set ✓"
-elif [ "$AI_PROVIDER" = "xai" ] && [ -n "$XAI_API_KEY" ]; then
-  node openclaw.mjs config set --json ai.credentials "{\"xaiApiKey\":\"$XAI_API_KEY\"}" 2>&1 || true
-  echo "[clawoop]   xAI credentials set ✓"
-elif [ "$AI_PROVIDER" = "deepseek" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
-  node openclaw.mjs config set --json ai.credentials "{\"deepseekApiKey\":\"$DEEPSEEK_API_KEY\"}" 2>&1 || true
-  echo "[clawoop]   DeepSeek credentials set ✓"
-elif [ -n "$ANTHROPIC_API_KEY" ]; then
-  node openclaw.mjs config set --json ai.credentials "{\"anthropicApiKey\":\"$ANTHROPIC_API_KEY\"}" 2>&1 || true
-  echo "[clawoop]   Anthropic credentials set ✓"
-else
-  echo "[clawoop]   WARNING: No API key found for provider ${AI_PROVIDER:-anthropic}"
-fi
-
-# Step 3b: Directly write auth-profiles.json as failsafe
-# OpenClaw reads API keys from this file; the config set commands above may silently fail.
-echo "[clawoop] Step 3b: Writing auth-profiles.json directly..."
-AUTH_DIR="/home/node/.openclaw/agents/main/agent"
-mkdir -p "$AUTH_DIR"
-
-if [ "$AI_PROVIDER" = "openai" ] && [ -n "$OPENAI_API_KEY" ]; then
-  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
-{
-  "default": {
-    "provider": "openai",
-    "type": "api-key",
-    "key": "$OPENAI_API_KEY"
-  }
-}
-AUTH_EOF
-  echo "[clawoop]   auth-profiles.json written for openai ✓"
-elif [ "$AI_PROVIDER" = "google" ] && [ -n "$GOOGLE_API_KEY" ]; then
-  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
-{
-  "default": {
-    "provider": "google",
-    "type": "api-key",
-    "key": "$GOOGLE_API_KEY"
-  }
-}
-AUTH_EOF
-  echo "[clawoop]   auth-profiles.json written for google ✓"
-elif [ "$AI_PROVIDER" = "xai" ] && [ -n "$XAI_API_KEY" ]; then
-  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
-{
-  "default": {
-    "provider": "xai",
-    "type": "api-key",
-    "key": "$XAI_API_KEY"
-  }
-}
-AUTH_EOF
-  echo "[clawoop]   auth-profiles.json written for xai ✓"
-elif [ "$AI_PROVIDER" = "deepseek" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
-  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
-{
-  "default": {
-    "provider": "deepseek",
-    "type": "api-key",
-    "key": "$DEEPSEEK_API_KEY"
-  }
-}
-AUTH_EOF
-  echo "[clawoop]   auth-profiles.json written for deepseek ✓"
-elif [ -n "$ANTHROPIC_API_KEY" ]; then
-  cat > "$AUTH_DIR/auth-profiles.json" <<AUTH_EOF
-{
-  "default": {
-    "provider": "anthropic",
-    "type": "api-key",
-    "key": "$ANTHROPIC_API_KEY"
-  }
-}
-AUTH_EOF
-  echo "[clawoop]   auth-profiles.json written for anthropic ✓"
-else
-  echo "[clawoop]   WARNING: No API key available to write auth-profiles.json"
-fi
+# Step 3b: Ensure agent directory exists (auth handled via env vars)
+echo "[clawoop] Step 3b: Ensuring agent directory exists..."
+mkdir -p "/home/node/.openclaw/agents/main/agent"
+echo "[clawoop]   Agent dir ready ✓ (API keys read from env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)"
 
 # Step 4: Configure Google OAuth for gog tool (Calendar, Gmail, Drive)
 update_stage "connecting"
@@ -190,7 +118,7 @@ CRED_EOF
   fi
 
   # Enable Google tools in OpenClaw config
-  node openclaw.mjs config set --json tools.gog '{"enabled":true}' 2>&1 || true
+  # gog tool is auto-detected via GOG_REFRESH_TOKEN env var
   
   # Set the Google credentials path
   export GOOGLE_APPLICATION_CREDENTIALS=/home/node/google-credentials.json
@@ -253,23 +181,12 @@ if [ -n "$HA_URL" ] && [ -n "$HA_TOKEN" ]; then
   echo "[clawoop]   Home Assistant configured"
 fi
 
-# Step 5: Enable service-specific tools
-echo "[clawoop] Step 5: Enabling service tools..."
-
-if [ -n "$NOTION_API_KEY" ]; then
-  echo "[clawoop]   Enabling Notion tool..."
-  node openclaw.mjs config set --json tools.notion '{"enabled":true}' 2>&1 || true
-fi
-
-if [ -n "$GITHUB_TOKEN" ]; then
-  echo "[clawoop]   Enabling GitHub tool..."
-  node openclaw.mjs config set --json tools.github '{"enabled":true}' 2>&1 || true
-fi
-
-if [ -n "$TRELLO_API_KEY" ]; then
-  echo "[clawoop]   Enabling Trello tool..."
-  node openclaw.mjs config set --json tools.trello '{"enabled":true}' 2>&1 || true
-fi
+# Step 5: Service tools are auto-detected via env vars
+echo "[clawoop] Step 5: Service tools configured via env vars..."
+# Tools (gog, notion, github, trello) are activated via their env vars,
+# not via tools.* config keys. OpenClaw detects them automatically.
+echo "[clawoop]   NOTION_API_KEY=${NOTION_API_KEY:+SET} GITHUB_TOKEN=${GITHUB_TOKEN:+SET} TRELLO_API_KEY=${TRELLO_API_KEY:+SET}"
+echo "[clawoop]   Tools ready ✓"
 
 # Step 5b: Run openclaw doctor --fix
 echo "[clawoop] Step 5b: Running doctor --fix..."
@@ -374,7 +291,7 @@ ${UNCONNECTED_SERVICES:-All services are connected!}
 - Be concise and helpful.
 - Always respond in English by default. If the user writes in another language, match their language.
 - Skip onboarding questions — you are already fully configured and ready to help.
-- If an AI request fails with a credit_exceeded or rate_limit error, tell the user: "Your monthly AI credits have been used up. They will renew at the start of your next billing cycle." Do not retry.
+- If an AI request fails with a credit_exceeded or rate_limit error, tell the user: "Your monthly AI credits have been used up. They will be renewed in the next billing cycle." Do not retry.
 SOUL_EOF
 echo "[clawoop]   SOUL.md written ✓"
 
@@ -382,7 +299,7 @@ echo "[clawoop]   SOUL.md written ✓"
 cat > "$WORKSPACE/USER.md" << 'EOF'
 # User
 
-The user is a Clawoop subscriber who has deployed this AI assistant. Help them with any task — from scheduling meetings to managing files. Be proactive and practical. Always start conversations in English. If the user writes in another language, switch to that language.
+The user is a Clawoop subscriber who has deployed this AI assistant. Help them with any task — from scheduling meetings to managing files. Be proactive and practical. Always default to English. If the user writes in another language, respond in that language instead.
 EOF
 echo "[clawoop]   USER.md written ✓"
 
@@ -438,7 +355,11 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
   RETRY=$((RETRY + 1))
   echo "[clawoop]   Gateway start attempt $RETRY/$MAX_RETRIES"
 
-  node openclaw.mjs gateway --allow-unconfigured 2>&1 &
+  if [ "$PLATFORM" = "whatsapp" ]; then
+    node openclaw.mjs gateway --allow-unconfigured 2>&1 | node /home/node/qr-watcher.mjs &
+  else
+    node openclaw.mjs gateway --allow-unconfigured 2>&1 &
+  fi
   GATEWAY_PID=$!
 
   # Health check — wait for gateway process to stabilize, then mark as running

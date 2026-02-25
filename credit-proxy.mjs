@@ -3,6 +3,7 @@
  * Clawoop Credit Proxy
  * Sits between OpenClaw and AI provider APIs.
  * Tracks token usage, enforces $15/month credit cap.
+ * Supports both streaming (SSE) and non-streaming responses.
  *
  * Usage: node credit-proxy.mjs
  * Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, USER_ID, INSTANCE_ID, AI_PROVIDER, AI_MODEL
@@ -16,22 +17,22 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const USER_ID = process.env.USER_ID;
 const INSTANCE_ID = process.env.INSTANCE_ID;
-const AI_MODEL = process.env.AI_MODEL || 'claude-opus-4-20250514';
+const AI_MODEL = process.env.AI_MODEL || 'anthropic/claude-opus-4-6';
 
 // Model pricing in cents per 1M tokens
 const MODEL_PRICING = {
     // Anthropic
-    'claude-opus-4-20250514': { input: 1500, output: 7500 },
-    'claude-sonnet-4-20250514': { input: 300, output: 1500 },
+    'anthropic/claude-opus-4-6': { input: 1500, output: 7500 },
+    'anthropic/claude-sonnet-4-5': { input: 300, output: 1500 },
     // OpenAI
-    'gpt-5.2': { input: 250, output: 1000 },
-    'gpt-4.1': { input: 200, output: 800 },
+    'openai/gpt-5.2': { input: 250, output: 1000 },
+    'openai/gpt-4.1': { input: 200, output: 800 },
     // Google
-    'gemini-2.5-pro': { input: 125, output: 500 },
+    'google/gemini-2.5-pro': { input: 125, output: 500 },
     // xAI
-    'grok-3': { input: 300, output: 1500 },
+    'xai/grok-3': { input: 300, output: 1500 },
     // DeepSeek
-    'deepseek-chat': { input: 27, output: 110 },
+    'deepseek/deepseek-chat': { input: 27, output: 110 },
 };
 
 // Real upstream API endpoints
@@ -48,7 +49,7 @@ function getUpstreamUrl(provider) {
 }
 
 function calcCostCents(model, tokensIn, tokensOut) {
-    const pricing = MODEL_PRICING[model] || MODEL_PRICING['claude-opus-4-20250514'];
+    const pricing = MODEL_PRICING[model] || MODEL_PRICING['anthropic/claude-opus-4-6'];
     const inCost = (tokensIn / 1_000_000) * pricing.input;
     const outCost = (tokensOut / 1_000_000) * pricing.output;
     return Math.ceil(inCost + outCost);
@@ -109,8 +110,7 @@ async function logUsage(deploymentId, tokensIn, tokensOut, model) {
         model,
     }).catch(e => console.error('[credit-proxy] Usage log failed:', e));
 
-    // Update balance atomically using RPC or simple patch
-    // We'll use a simple increment approach
+    // Update balance atomically using simple increment approach
     const data = await supabaseRest('GET', 'credit_balance', `?user_id=eq.${USER_ID}&select=total_cost_cents`);
     if (data && data.length > 0) {
         const newTotal = data[0].total_cost_cents + costCents;
@@ -122,28 +122,34 @@ async function logUsage(deploymentId, tokensIn, tokensOut, model) {
     return costCents;
 }
 
-// Extract token usage from AI provider response
+// Extract token usage from AI provider response (non-streaming)
 function extractUsage(provider, responseBody) {
     try {
         const data = JSON.parse(responseBody);
-        if (provider === 'anthropic') {
-            return {
-                tokensIn: data.usage?.input_tokens || 0,
-                tokensOut: data.usage?.output_tokens || 0,
-            };
-        } else if (provider === 'openai' || provider === 'xai' || provider === 'deepseek') {
-            return {
-                tokensIn: data.usage?.prompt_tokens || 0,
-                tokensOut: data.usage?.completion_tokens || 0,
-            };
-        } else if (provider === 'google') {
-            const meta = data.usageMetadata || {};
-            return {
-                tokensIn: meta.promptTokenCount || 0,
-                tokensOut: meta.candidatesTokenCount || 0,
-            };
-        }
+        return extractUsageFromParsed(provider, data);
     } catch { }
+    return { tokensIn: 0, tokensOut: 0 };
+}
+
+// Extract usage from parsed JSON object
+function extractUsageFromParsed(provider, data) {
+    if (provider === 'anthropic') {
+        return {
+            tokensIn: data.usage?.input_tokens || 0,
+            tokensOut: data.usage?.output_tokens || 0,
+        };
+    } else if (provider === 'openai' || provider === 'xai' || provider === 'deepseek') {
+        return {
+            tokensIn: data.usage?.prompt_tokens || 0,
+            tokensOut: data.usage?.completion_tokens || 0,
+        };
+    } else if (provider === 'google') {
+        const meta = data.usageMetadata || {};
+        return {
+            tokensIn: meta.promptTokenCount || 0,
+            tokensOut: meta.candidatesTokenCount || 0,
+        };
+    }
     return { tokensIn: 0, tokensOut: 0 };
 }
 
@@ -155,6 +161,15 @@ function detectProvider(path) {
     return process.env.AI_PROVIDER || 'anthropic';
 }
 
+// Check if request body indicates streaming
+function isStreamingRequest(reqBody) {
+    try {
+        const data = JSON.parse(reqBody);
+        return data.stream === true;
+    } catch { }
+    return false;
+}
+
 // Credit exceeded response mimicking provider error format
 function creditExceededResponse(provider) {
     if (provider === 'anthropic') {
@@ -162,20 +177,107 @@ function creditExceededResponse(provider) {
             type: 'error',
             error: {
                 type: 'rate_limit_error',
-                message: 'Aylık AI krediniz doldu ($15). Bir sonraki faturalama döneminde yenilenecektir. Detaylar için clawoop.com hesabınızı kontrol edin.',
+                message: 'Your monthly AI credits have been used up ($15). They will be renewed in the next billing cycle. Check your account at clawoop.com for details.',
             },
         });
     }
     return JSON.stringify({
         error: {
-            message: 'Aylık AI krediniz doldu ($15). Bir sonraki faturalama döneminde yenilenecektir.',
+            message: 'Your monthly AI credits have been used up ($15). They will be renewed in the next billing cycle.',
             type: 'rate_limit_error',
             code: 'credit_exceeded',
         },
     });
 }
 
-// Forward request to upstream
+// Forward request and stream response back in real-time (SSE streaming)
+function forwardRequestStreaming(provider, req, reqBody, res, credit) {
+    const upstream = new URL(getUpstreamUrl(provider) + req.url);
+
+    const options = {
+        hostname: upstream.hostname,
+        port: 443,
+        path: upstream.pathname + upstream.search,
+        method: req.method,
+        headers: { ...req.headers, host: upstream.hostname },
+    };
+
+    const proxyReq = https.request(options, (proxyRes) => {
+        // Forward status and headers immediately so client starts receiving
+        const responseHeaders = { ...proxyRes.headers };
+        res.writeHead(proxyRes.statusCode, responseHeaders);
+
+        // Collect all chunks for usage extraction at the end
+        let fullBody = '';
+        let lastUsage = { tokensIn: 0, tokensOut: 0 };
+
+        proxyRes.on('data', (chunk) => {
+            // Forward each chunk immediately to OpenClaw (real-time streaming)
+            res.write(chunk);
+
+            // Also accumulate for usage extraction
+            const chunkStr = chunk.toString();
+            fullBody += chunkStr;
+
+            // Try to extract usage from SSE data: lines
+            // Anthropic sends usage in message_delta events
+            // OpenAI sends usage in the final chunk
+            const lines = chunkStr.split('\n');
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr === '[DONE]') continue;
+                try {
+                    const event = JSON.parse(jsonStr);
+                    // Anthropic: message_delta has usage
+                    if (event.type === 'message_delta' && event.usage) {
+                        lastUsage.tokensOut = event.usage.output_tokens || lastUsage.tokensOut;
+                    }
+                    // Anthropic: message_start has input usage
+                    if (event.type === 'message_start' && event.message?.usage) {
+                        lastUsage.tokensIn = event.message.usage.input_tokens || 0;
+                    }
+                    // OpenAI/xAI/DeepSeek: usage in final chunk
+                    if (event.usage) {
+                        lastUsage.tokensIn = event.usage.prompt_tokens || event.usage.input_tokens || lastUsage.tokensIn;
+                        lastUsage.tokensOut = event.usage.completion_tokens || event.usage.output_tokens || lastUsage.tokensOut;
+                    }
+                } catch { }
+            }
+        });
+
+        proxyRes.on('end', () => {
+            res.end();
+
+            // Log usage if we got any
+            if (proxyRes.statusCode >= 200 && proxyRes.statusCode < 300) {
+                if (lastUsage.tokensIn > 0 || lastUsage.tokensOut > 0) {
+                    logUsage(INSTANCE_ID, lastUsage.tokensIn, lastUsage.tokensOut, AI_MODEL)
+                        .then(cost => {
+                            console.log(`[credit-proxy] Streamed: ${lastUsage.tokensIn}in/${lastUsage.tokensOut}out = ${cost}¢ | remaining: ~${credit.remaining - cost}¢`);
+                        })
+                        .catch(e => console.error('[credit-proxy] Usage log failed:', e));
+                }
+            }
+        });
+
+        proxyRes.on('error', (err) => {
+            console.error('[credit-proxy] Upstream stream error:', err);
+            res.end();
+        });
+    });
+
+    proxyReq.on('error', (err) => {
+        console.error('[credit-proxy] Proxy request error:', err);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Credit proxy error', type: 'proxy_error' } }));
+    });
+
+    proxyReq.write(reqBody);
+    proxyReq.end();
+}
+
+// Forward request and buffer response (non-streaming)
 function forwardRequest(provider, req, reqBody) {
     return new Promise((resolve, reject) => {
         const upstream = new URL(getUpstreamUrl(provider) + req.url);
@@ -233,24 +335,31 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        // Forward to real API
-        const upstream = await forwardRequest(provider, req, reqBody);
+        const streaming = isStreamingRequest(reqBody);
 
-        // Extract and log usage from successful responses
-        if (upstream.statusCode >= 200 && upstream.statusCode < 300) {
-            const usage = extractUsage(provider, upstream.body);
-            if (usage.tokensIn > 0 || usage.tokensOut > 0) {
-                const model = AI_MODEL;
-                const cost = await logUsage(INSTANCE_ID, usage.tokensIn, usage.tokensOut, model);
-                console.log(`[credit-proxy] Logged: ${usage.tokensIn}in/${usage.tokensOut}out = ${cost}¢ | remaining: ${credit.remaining - cost}¢`);
+        if (streaming) {
+            // Streaming: forward chunks in real-time, extract usage at the end
+            forwardRequestStreaming(provider, req, reqBody, res, credit);
+        } else {
+            // Non-streaming: buffer full response, extract usage, then send
+            const upstream = await forwardRequest(provider, req, reqBody);
+
+            // Extract and log usage from successful responses
+            if (upstream.statusCode >= 200 && upstream.statusCode < 300) {
+                const usage = extractUsage(provider, upstream.body);
+                if (usage.tokensIn > 0 || usage.tokensOut > 0) {
+                    const model = AI_MODEL;
+                    const cost = await logUsage(INSTANCE_ID, usage.tokensIn, usage.tokensOut, model);
+                    console.log(`[credit-proxy] Logged: ${usage.tokensIn}in/${usage.tokensOut}out = ${cost}¢ | remaining: ${credit.remaining - cost}¢`);
+                }
             }
-        }
 
-        // Forward response back to OpenClaw
-        const responseHeaders = { ...upstream.headers };
-        delete responseHeaders['transfer-encoding']; // We send full body
-        res.writeHead(upstream.statusCode, responseHeaders);
-        res.end(upstream.body);
+            // Forward response back to OpenClaw
+            const responseHeaders = { ...upstream.headers };
+            delete responseHeaders['transfer-encoding']; // We send full body
+            res.writeHead(upstream.statusCode, responseHeaders);
+            res.end(upstream.body);
+        }
     } catch (err) {
         console.error('[credit-proxy] Proxy error:', err);
         res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -261,4 +370,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
     console.log(`[credit-proxy] Running on http://127.0.0.1:${PORT}`);
     console.log(`[credit-proxy] User: ${USER_ID}, Instance: ${INSTANCE_ID}, Model: ${AI_MODEL}`);
+    console.log(`[credit-proxy] Streaming support: enabled`);
 });
