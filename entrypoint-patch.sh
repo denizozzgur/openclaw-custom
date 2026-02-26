@@ -19,13 +19,13 @@ echo "[clawoop] Platform: ${PLATFORM:-telegram}"
 update_stage "configuring"
 echo "[clawoop] Step 1: Running openclaw onboard..."
 if [ "$PLATFORM" = "slack" ]; then
-  node openclaw.mjs onboard --channel=slack --token="$SLACK_BOT_TOKEN" 2>&1 || true
+  node openclaw.mjs onboard slack --token="$SLACK_BOT_TOKEN" 2>&1 || true
 elif [ "$PLATFORM" = "discord" ]; then
-  node openclaw.mjs onboard --channel=discord --token="$DISCORD_BOT_TOKEN" 2>&1 || true
+  node openclaw.mjs onboard discord --token="$DISCORD_BOT_TOKEN" 2>&1 || true
 elif [ "$PLATFORM" = "whatsapp" ]; then
   echo "[clawoop]   WhatsApp uses QR pairing — skipping onboard, will login during gateway start"
 else
-  node openclaw.mjs onboard --channel=telegram --token="$TELEGRAM_BOT_TOKEN" 2>&1 || true
+  node openclaw.mjs onboard telegram --token="$TELEGRAM_BOT_TOKEN" 2>&1 || true
 fi
 
 # Step 2: Set channel config with dmPolicy=open via CLI
@@ -47,7 +47,7 @@ fi
 echo "[clawoop] Step 3: Setting AI model config..."
 echo "[clawoop]   Model: ${AI_MODEL:-anthropic/claude-opus-4-6}"
 # Use the correct OpenClaw config key: agents.defaults.model (provider/model format)
-node openclaw.mjs config set agents.defaults.model "${AI_MODEL:-anthropic/claude-opus-4-6}" 2>&1 || true
+node openclaw.mjs config set --json agents.defaults.model "{\"primary\":\"${AI_MODEL:-anthropic/claude-opus-4-6}\"}" 2>&1 || true
 echo "[clawoop]   Model set via agents.defaults.model ✓"
 # API keys are read directly from env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 # No need for ai.credentials — OpenClaw detects keys from environment automatically.
