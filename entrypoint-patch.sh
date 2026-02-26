@@ -18,11 +18,8 @@ echo "[clawoop] Platform: ${PLATFORM:-telegram}"
 # Step 1: Onboard the correct channel
 update_stage "configuring"
 echo "[clawoop] Step 1: Running openclaw onboard..."
-if [ "$PLATFORM" = "whatsapp" ]; then
-  echo "[clawoop]   WhatsApp uses QR pairing — skipping onboard, will login during gateway start"
-else
-  node openclaw.mjs onboard 2>&1 || true
-fi
+# onboard is interactive (requires stdin) — skip in Docker
+echo "[clawoop]   Skipping interactive onboard (Docker mode)"
 
 # Step 2: Set channel config with dmPolicy=open via CLI
 echo "[clawoop] Step 2: Setting channel config via CLI..."
@@ -381,6 +378,21 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
     DELAY=$((RETRY * 5))
     echo "[clawoop]   Restarting in ${DELAY}s..."
     sleep $DELAY
+
+    # After first crash, Doctor has auto-configured defaults.
+    # Re-apply our dmPolicy=open so everyone can message the bot.
+    if [ $RETRY -eq 1 ]; then
+      echo "[clawoop]   Re-applying channel config after Doctor..."
+      if [ "$PLATFORM" = "slack" ]; then
+        node openclaw.mjs config set --json channels.slack "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$SLACK_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
+      elif [ "$PLATFORM" = "discord" ]; then
+        node openclaw.mjs config set --json channels.discord "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$DISCORD_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
+      elif [ "$PLATFORM" = "whatsapp" ]; then
+        node openclaw.mjs config set --json channels.whatsapp "{\"enabled\":true,\"dmPolicy\":\"open\",\"allowFrom\":[\"*\"]}" 2>&1 || true
+      else
+        node openclaw.mjs config set --json channels.telegram "{\"enabled\":true,\"dmPolicy\":\"open\",\"botToken\":\"$TELEGRAM_BOT_TOKEN\",\"allowFrom\":[\"*\"]}" 2>&1 || true
+      fi
+    fi
   fi
 done
 
