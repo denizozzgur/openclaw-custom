@@ -341,6 +341,9 @@ fi
 update_stage "starting"
 echo "[clawoop] Step 10: Starting gateway..."
 
+# Clean up any stale openclaw.json from previous deploys
+rm -f /home/node/.openclaw/openclaw.json 2>/dev/null
+
 MAX_RETRIES=5
 RETRY=0
 while [ $RETRY -lt $MAX_RETRIES ]; do
